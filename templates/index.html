@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Chat</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+    <div class="chat-shell">
+        <aside class="sidebar">
+            <div class="theme-toggle" onclick="toggleTheme()">
+                <span>🌙 Theme</span>
+                <div class="toggle-switch" id="theme-switch"></div>
+            </div>
+
+            <div class="search-bar">
+                <input type="text" id="search-input" placeholder="Search messages..." onkeyup="searchMessages()">
+            </div>
+
+            <h3>Quick Prompts</h3>
+            <div class="hint">Try these:</div>
+            <ul>
+                <li><button class="secondary" onclick="usePrompt('Summarize the following text...')">📝 Summarize</button></li>
+                <li><button class="secondary" onclick="usePrompt('Generate a short poem about AI and code')">✍️ Poem</button></li>
+                <li><button class="secondary" onclick="usePrompt('Explain recursion like I am five')">🧠 Explain</button></li>
+            </ul>
+            <hr>
+            <button class="export-btn" onclick="exportChat()">📥 Export Chat</button>
+            <div class="hint">Model: <strong>local-demo</strong></div>
+        </aside>
+
+        <section class="main-card">
+            <div id="chatbox" aria-live="polite"></div>
+
+            <div class="input-area" role="region" aria-label="Message input">
+                <input id="msg" type="text" placeholder="Ask anything..." autocomplete="off">
+                <div class="actions">
+                    <button onclick="sendMsg()">Send</button>
+                    <button class="secondary" onclick="clearChat()">Clear</button>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+
+<script>
+const chatbox = document.getElementById('chatbox');
+const msgInput = document.getElementById('msg');
+const STORAGE_KEY = 'ai_chat_history';
+const THEME_KEY = 'ai_theme_mode';
+let lastBotMessageId = null;
+
+// Load theme and chat on page load
+window.addEventListener('DOMContentLoaded', () => {
+    loadTheme();
+    loadChat();
+    msgInput.focus();
+});
+
+// ===== THEME MANAGEMENT =====
+function toggleTheme(){
+    const body = document.body;
+    const isDark = body.classList.contains('light-mode');
+    if(isDark){
+        body.classList.remove('light-mode');
+        localStorage.setItem(THEME_KEY, 'dark');
+    } else {
+        body.classList.add('light-mode');
+        localStorage.setItem(THEME_KEY, 'light');
+    }
+    updateThemeSwitch();
+}
+
+function loadTheme(){
+    const saved = localStorage.getItem(THEME_KEY) || 'dark';
+    const themeSwitch = document.getElementById('theme-switch');
+    if(saved === 'light'){
+        document.body.classList.add('light-mode');
+        themeSwitch.classList.add('active');
+    } else {
+        themeSwitch.classList.remove('active');
+    }
+}
+
+function updateThemeSwitch(){
+    const themeSwitch = document.getElementById('theme-switch');
+    if(document.body.classList.contains('light-mode')){
+        themeSwitch.classList.add('active');
+    } else {
+        themeSwitch.classList.remove('active');
+    }
+}
+
+// ===== CHAT MANAGEMENT =====
+function loadChat(){
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if(saved){
+        try{
+            const history = JSON.parse(saved);
+            history.forEach(m => appendBubble(m.role, m.text, false));
+        }catch(e){ console.error('Failed to load chat:', e); }
+    }
+}
+
+function saveChat(){
+    const messages = Array.from(chatbox.querySelectorAll('.bubble')).map((el, idx) => {
+        const role = el.classList.contains('user') ? 'user' : 'bot';
+        const text = el.querySelector('.content')?.innerText || '';
+        el.id = `msg-${idx}`;
+        return {role, text};
+    });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+}
+
+function escapeHtml(unsafe){
+    return unsafe.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+function appendBubble(role, text, save=true){
+    const container = document.createElement('div');
+    container.className = role + ' bubble';
+    container.dataset.role = role;
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? '👤' : '🤖';
+    meta.appendChild(avatar);
+    
+    const time = document.createElement('div');
+    time.className = 'time';
+    time.textContent = new Date().toLocaleTimeString();
+    meta.appendChild(time);
+
+    const content = document.createElement('div');
+    content.className = 'content';
+    content.innerHTML = `<div>${escapeHtml(text)}</div>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'message-actions';
+    
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copy-btn';
+    copyBtn.textContent = '📋 Copy';
+    copyBtn.onclick = () => {
+        navigator.clipboard.writeText(text).then(() => {
+            copyBtn.textContent = '✓ Copied!';
+            setTimeout(() => { copyBtn.textContent = '📋 Copy'; }, 2000);
+        });
+    };
+    
+    const delBtn = document.createElement('button');
+    delBtn.className = 'delete-btn';
+    delBtn.textContent = '🗑️ Delete';
+    delBtn.onclick = () => {
+        container.style.animation = 'fadeIn 200ms ease reverse';
+        setTimeout(() => {
+            container.remove();
+            saveChat();
+        }, 200);
+    };
+
+    actions.appendChild(copyBtn);
+    
+    // Add regenerate button only for bot messages
+    if(role === 'bot'){
+        const regenBtn = document.createElement('button');
+        regenBtn.className = 'regenerate-btn';
+        regenBtn.textContent = '🔄 Regenerate';
+        regenBtn.onclick = () => regenerateResponse();
+        actions.appendChild(regenBtn);
+        lastBotMessageId = container.id;
+    } else {
+        actions.appendChild(delBtn);
+    }
+
+    container.appendChild(meta);
+    container.appendChild(content);
+    container.appendChild(actions);
+    chatbox.appendChild(container);
+    chatbox.scrollTop = chatbox.scrollHeight;
+    
+    if(save) saveChat();
+}
+
+function showTyping(){
+    const container = document.createElement('div');
+    container.className = 'bot bubble';
+    container.id = 'typing-indicator';
+    const content = document.createElement('div');
+    content.className = 'content typing';
+    content.innerHTML = '<span></span><span></span><span></span>';
+    container.appendChild(content);
+    chatbox.appendChild(container);
+    chatbox.scrollTop = chatbox.scrollHeight;
+}
+
+function removeTyping(){
+    const typing = document.getElementById('typing-indicator');
+    if(typing) typing.remove();
+}
+
+function sendMsg(){
+    const msg = msgInput.value.trim();
+    if(!msg) {
+        console.warn('Empty message');
+        return;
+    }
+    
+    console.log('Sending message:', msg);
+    appendBubble('user', msg);
+    msgInput.value = '';
+    msgInput.focus();
+    
+    showTyping();
+
+    fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg})})
+        .then(r => {
+            console.log('Response status:', r.status);
+            if(!r.ok) throw new Error(`Server error: ${r.status}`);
+            return r.json();
+        })
+        .then(data=>{
+            console.log('Got data:', data);
+            removeTyping();
+            const response = data.response || 'No response received';
+            appendBubble('bot', response);
+        })
+        .catch(err=>{
+            console.error('Fetch error:', err);
+            removeTyping();
+            const errorMsg = err.message.includes('Failed to fetch') 
+                ? '⚠️ Cannot connect to server. Make sure Flask is running on http://localhost:5000'
+                : `⚠️ Error: ${err.message}`;
+            appendBubble('bot', errorMsg);
+        });
+}
+
+function regenerateResponse(){
+    const lastMsg = Array.from(chatbox.querySelectorAll('.bubble.user')).pop();
+    if(!lastMsg) return;
+    const msg = lastMsg.querySelector('.content')?.innerText || '';
+    sendMsg();
+}
+
+function usePrompt(p){ 
+    msgInput.value = p; 
+    msgInput.focus(); 
+    setTimeout(() => sendMsg(), 100);
+}
+
+function clearChat(){ 
+    if(confirm('Clear all messages?')){
+        chatbox.innerHTML = ''; 
+        localStorage.removeItem(STORAGE_KEY);
+    }
+}
+
+// ===== SEARCH MESSAGES =====
+function searchMessages(){
+    const query = document.getElementById('search-input').value.toLowerCase();
+    const bubbles = chatbox.querySelectorAll('.bubble');
+    
+    bubbles.forEach(bubble => {
+        const text = bubble.querySelector('.content')?.innerText.toLowerCase() || '';
+        bubble.style.opacity = query === '' || text.includes(query) ? '1' : '0.4';
+    });
+}
+
+// ===== EXPORT CHAT =====
+function exportChat(){
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if(!saved) {
+        alert('No chat history to export!');
+        return;
+    }
+    
+    try {
+        const history = JSON.parse(saved);
+        let text = 'AI Chat History\n' + '='.repeat(50) + '\n\n';
+        history.forEach((msg, idx) => {
+            const prefix = msg.role === 'user' ? '👤 You' : '🤖 AI';
+            text += `${prefix}:\n${msg.text}\n\n`;
+        });
+        
+        const blob = new Blob([text], {type: 'text/plain'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chat-${new Date().getTime()}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch(e) {
+        alert('Failed to export chat');
+    }
+}
+
+// ===== EVENT LISTENERS =====
+msgInput.addEventListener('keypress', function(e){ 
+    if(e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMsg();
+    }
+});
+
+// Focus input on load
+msgInput.focus();
+</script>
+
+</body>
+</html>
